@@ -11,6 +11,38 @@ take screenshots, and use its camera. Call these machines **hosts**. It is tech 
  no open port, no SSH, no static IP               host.* tools · terminal pane · camera.show · notices
 ```
 
+## Download and install (for everyone else)
+Open the [Releases page](../../releases/latest) and download the file for your computer:
+
+| Computer | File | How |
+|---|---|---|
+| Mac (Apple silicon and Intel) | `JarvisSupportHost-<version>-mac-universal.dmg` | open it, drag **Jarvis Support Host** to Applications, then follow "First open on a Mac" |
+| Windows | `JarvisSupportHost-windows-x64.exe` (ARM: `-arm64.exe`) | plain exe, no installer: double-click, follow "First open on Windows" |
+| Linux (Debian/Ubuntu/Kali) | `jarvis-support-host_<version>_amd64.deb` | `sudo apt install ./jarvis-support-host_*.deb`, then run `jarvis-host` |
+| Linux (other) | `jarvis-host-<version>-linux-amd64.tar.gz` | unpack, run `./jarvis-host` |
+
+A console window opens and asks for the address of the Jarvis server once. Zain approves the computer once.
+
+### First open on a Mac (the app is not signed yet)
+macOS blocks apps that are not signed by a registered developer. This is expected; you allow it once:
+1. Drag **Jarvis Support Host** into Applications and double-click it. macOS says it cannot be opened. Click **Done** (not "Move to Bin").
+2. Open **System Settings > Privacy & Security**, scroll down to the Security section. It says
+   *"Jarvis Support Host" was blocked*. Click **Open Anyway**, enter your Mac password, then **Open Anyway** again.
+   (Older macOS: right-click the app > **Open** > **Open**.)
+3. Terminal opens and asks for the server address.
+4. If macOS says the app is "damaged": open Terminal and run
+   `xattr -dr com.apple.quarantine "/Applications/Jarvis Support Host.app"`, then open it again.
+5. Allow Camera / Screen Recording when asked (System Settings > Privacy & Security) if Jarvis needs them.
+
+### First open on Windows
+SmartScreen may say "Windows protected your PC". Click **More info > Run anyway**.
+
+### Building the installers (GitHub Actions)
+`.github/workflows/build.yml` builds on GitHub's own Mac, Windows and Linux runners. Push a tag
+(`git tag v0.1.0 && git push origin v0.1.0`) to build everything and publish a Release; or Actions >
+build > Run workflow for artifacts only. Signing: still a placeholder in `scripts/sign.sh`
+(the workflow marks where the secrets would go).
+
 ## Run it
 
 1. Build (or copy a build from `dist/`): `scripts/build.sh` (needs Go; no C compiler).
@@ -101,6 +133,7 @@ binary (needs `lipo` on a Mac). Linux webcam hardware and the Linux indicator (n
 and a desktop) were not exercised either: this machine had no camera or display session.
 
 ## Limits to know
+- Follow-up (not done): bundle a static ffmpeg per OS in the installers.
 - Cameras need **ffmpeg** on the host (next to the app, in `bin/`, or on PATH); video only (no audio).
 - A relayed camera's login is in memory only, but is visible to other users on the host in the ffmpeg
   command line while streaming.

@@ -1,0 +1,122 @@
+name: build
+# Builds Mac (universal DMG), Windows (plain .exe) and Linux (.deb + .tar.gz) on GitHub's runners.
+# Tag v* -> also publishes a GitHub Release with all files. Manual run (Actions > build > Run workflow) = artifacts only.
+# NO CODE SIGNING YET. Signing goes in scripts/sign.sh (called by scripts/build.sh); secrets would be passed
+# to the build steps below as env (see the commented SIGNING block in each job).
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - name: cross-compile check
+        run: |
+          for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64 windows/arm64; do
+            CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/jarvis-host && echo "$t ok"
+          done
+
+  linux:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - name: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" | sed 's/^VERSION=main$/VERSION=0.0.0-dev/' >> "$GITHUB_ENV"
+      # SIGNING (later): add env here, e.g. GPG key for detached signature of SHA256SUMS
+      - run: scripts/build.sh linux/amd64 linux/arm64
+      - run: packaging/package-linux.sh
+      - run: dist/jarvis-host-linux-amd64 version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+
+  mac:
+    # Universal (Apple silicon + Intel) DMG. Ad-hoc signed only, NOT notarized: first open = Open Anyway.
+    needs: test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - name: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" | sed 's/^VERSION=main$/VERSION=0.0.0-dev/' >> "$GITHUB_ENV"
+      # SIGNING (later): import the Developer ID certificate into a keychain here, export
+      # SIGN_IDENTITY / NOTARY credentials from secrets, and implement scripts/sign.sh.
+      - run: scripts/build.sh darwin/arm64 darwin/amd64
+      - run: lipo -archs dist/jarvis-host-darwin-universal
+      - run: packaging/package-mac.sh
+      - name: smoke test (the arm64 slice runs natively on this runner)
+        run: |
+          dist/jarvis-host-darwin-universal version
+          dist/jarvis-host-darwin-universal --help 2>&1 | head -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: dist/*.dmg
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - name: build
+        shell: pwsh
+        run: |
+          $v = "$env:GITHUB_REF_NAME".TrimStart('v'); if ($v -eq 'main' -or $v -eq '' -or $v -like '*merge*') { $v = '0.0.0-dev' }
+          $env:VERSION = $v
+          # SIGNING (later): signtool sign ... inside scripts/build.ps1 (placeholder there)
+          ./scripts/build.ps1
+      - name: smoke test (runs the real .exe)
+        shell: pwsh
+        run: |
+          ./dist/jarvis-host-windows-amd64.exe version
+          ./dist/jarvis-host-windows-amd64.exe --help 2>&1 | Select-Object -First 5
+      - name: rename for the release
+        shell: pwsh
+        run: |
+          Copy-Item dist/jarvis-host-windows-amd64.exe dist/JarvisSupportHost-windows-x64.exe
+          Copy-Item dist/jarvis-host-windows-arm64.exe dist/JarvisSupportHost-windows-arm64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/JarvisSupportHost-windows-x64.exe
+            dist/JarvisSupportHost-windows-arm64.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, mac, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - run: cd out && sha256sum * > SHA256SUMS && ls -l
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --title "Jarvis Support Host $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md --verify-tag
